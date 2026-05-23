@@ -7,10 +7,114 @@
 //! READ-ONLY after scaffold. To change an AC, file
 //! agent/intent_card_amendment_request.json and re-scaffold.
 
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::doc_markdown,
+    clippy::too_many_lines
+)]
+
+use serde_json::json;
+use session_trace_receipt::{evaluate, HardConstraints};
+
 #[test]
 fn acceptance_ac4() {
-    // TODO(edit-agent): implement the test body that verifies the
-    // AC description above. Until implemented, this test fails so the
-    // iterate-and-prove loop sees a real signal.
-    panic!("AC AC4 not yet implemented — see file header");
+    // --- Path 1: intent-card declares deny_network → receipt MUST carry it ---
+    let intent_card_with = json!({
+        "hard_constraints": {
+            "deny_network": true,
+        }
+    });
+    let constraints = HardConstraints::from_intent_card(&intent_card_with);
+    assert!(
+        constraints.deny_network,
+        "from_intent_card must mirror the declared deny_network claim",
+    );
+    assert!(
+        !constraints.deny_unsafe_runtime,
+        "undeclared deny_unsafe_runtime must default to false",
+    );
+    assert!(
+        constraints.max_subprocess_depth.is_none(),
+        "undeclared max_subprocess_depth must remain None",
+    );
+
+    let eval = evaluate(&[], &constraints);
+    assert!(
+        eval.map.contains_key("deny_network"),
+        "deny_network entry must be present when claimed",
+    );
+    let entry = eval
+        .map
+        .get("deny_network")
+        .and_then(serde_json::Value::as_object)
+        .expect("deny_network must serialize as a JSON object");
+    assert_eq!(
+        entry.get("claimed").and_then(serde_json::Value::as_bool),
+        Some(true),
+        "claimed must reflect the intent-card declaration",
+    );
+    assert!(
+        entry.contains_key("connect_events"),
+        "deny_network entry must carry an observed counterpart (connect_events)",
+    );
+    assert_eq!(
+        entry.get("violated").and_then(serde_json::Value::as_bool),
+        Some(false),
+        "no events → not violated",
+    );
+    assert!(
+        !eval.map.contains_key("deny_unsafe_runtime"),
+        "undeclared deny_unsafe_runtime must NOT appear in constraints_evaluated",
+    );
+    assert!(
+        !eval.map.contains_key("max_subprocess_depth"),
+        "undeclared max_subprocess_depth must NOT appear in constraints_evaluated",
+    );
+
+    // --- Path 2: intent-card declares only an unknown key (deny_unsafe) ---
+    //
+    // The receipt must NOT spuriously include deny_network: a constraint only
+    // appears when explicitly claimed by the intent-card.
+    let intent_card_without = json!({
+        "hard_constraints": {
+            "deny_unsafe": true,
+        }
+    });
+    let constraints2 = HardConstraints::from_intent_card(&intent_card_without);
+    assert!(
+        !constraints2.deny_network,
+        "deny_network must remain false when not declared",
+    );
+
+    let eval2 = evaluate(&[], &constraints2);
+    assert!(
+        !eval2.map.contains_key("deny_network"),
+        "deny_network must be absent when not declared in the intent-card",
+    );
+    assert!(
+        eval2.map.is_empty(),
+        "with no recognised constraints declared, the map must be empty",
+    );
+
+    // --- Path 3: declared max_subprocess_depth populates an observed counterpart ---
+    let intent_card_depth = json!({
+        "hard_constraints": {
+            "max_subprocess_depth": 4,
+        }
+    });
+    let constraints3 = HardConstraints::from_intent_card(&intent_card_depth);
+    assert_eq!(constraints3.max_subprocess_depth, Some(4));
+    let eval3 = evaluate(&[], &constraints3);
+    let depth_entry = eval3
+        .map
+        .get("max_subprocess_depth")
+        .and_then(serde_json::Value::as_object)
+        .expect("max_subprocess_depth entry must be present when claimed");
+    assert!(depth_entry.contains_key("claimed"));
+    assert!(depth_entry.contains_key("observed_depth"));
+    assert_eq!(
+        depth_entry.get("violated").and_then(serde_json::Value::as_bool),
+        Some(false),
+    );
 }

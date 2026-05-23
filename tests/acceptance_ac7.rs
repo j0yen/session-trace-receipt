@@ -7,10 +7,60 @@
 //! READ-ONLY after scaffold. To change an AC, file
 //! agent/intent_card_amendment_request.json and re-scaffold.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown)]
+
+use std::fs::OpenOptions;
+use std::io::Write;
+
+use session_trace_receipt::{sha256_hex, tracer_info_from_log};
+use tempfile::NamedTempFile;
+
 #[test]
 fn acceptance_ac7() {
-    // TODO(edit-agent): implement the test body that verifies the
-    // AC description above. Until implemented, this test fails so the
-    // iterate-and-prove loop sees a real signal.
-    panic!("AC AC7 not yet implemented — see file header");
+    // --- Write a 2-line NDJSON log to disk ---
+    let mut tmp = NamedTempFile::new().expect("temp file must create");
+    let initial_bytes = b"{\"ts\":0,\"type\":\"begin\",\"root_pid\":99}\n\
+                         {\"ts\":7,\"type\":\"execve\",\"pid\":99,\"file\":\"/usr/bin/cargo\"}\n";
+    tmp.write_all(initial_bytes).expect("write must succeed");
+    tmp.flush().expect("flush must succeed");
+    let path = tmp.path().to_path_buf();
+
+    // --- Capture the trusted receipt's log_sha256 ---
+    let tracer1 = tracer_info_from_log(&path).expect("tracer_info_from_log must succeed");
+    assert_eq!(tracer1.tool, "ctrace");
+    assert_eq!(tracer1.event_count, 2, "two non-empty lines were written");
+    assert_eq!(
+        tracer1.log_sha256.len(),
+        64,
+        "log_sha256 must be a 64-char hex sha256",
+    );
+    assert!(tracer1.log_sha256.chars().all(|c| c.is_ascii_hexdigit()));
+
+    // The receipt's digest must equal the sha256 of the file bytes — the very
+    // definition of tamper-evidence (recompute on disk → must match receipt).
+    let recomputed = sha256_hex(initial_bytes);
+    assert_eq!(
+        tracer1.log_sha256, recomputed,
+        "log_sha256 must equal the sha256 of the bytes actually on disk",
+    );
+
+    // --- Mutate the log: append a third line ---
+    {
+        let mut handle = OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .expect("append-open must succeed");
+        handle
+            .write_all(b"{\"ts\":12,\"type\":\"connect\",\"pid\":99}\n")
+            .expect("append must succeed");
+        handle.flush().expect("flush must succeed");
+    }
+
+    // --- Recompute: the digest MUST differ, proving tamper-evidence ---
+    let tracer2 = tracer_info_from_log(&path).expect("tracer_info_from_log must succeed");
+    assert_eq!(tracer2.event_count, 3, "now three non-empty lines");
+    assert_ne!(
+        tracer1.log_sha256, tracer2.log_sha256,
+        "mutating the on-disk log MUST change log_sha256 (tamper-evidence)",
+    );
 }

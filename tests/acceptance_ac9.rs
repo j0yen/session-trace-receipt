@@ -7,10 +7,56 @@
 //! READ-ONLY after scaffold. To change an AC, file
 //! agent/intent_card_amendment_request.json and re-scaffold.
 
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown)]
+
+use session_trace_receipt::{filter_events, TraceEvent};
+
+fn ev(ts: u64, ty: &str) -> TraceEvent {
+    TraceEvent {
+        ts,
+        r#type: ty.to_string(),
+        pid: None,
+        comm: None,
+        file: None,
+        path: None,
+        flags: None,
+    }
+}
+
 #[test]
 fn acceptance_ac9() {
-    // TODO(edit-agent): implement the test body that verifies the
-    // AC description above. Until implemented, this test fails so the
-    // iterate-and-prove loop sees a real signal.
-    panic!("AC AC9 not yet implemented — see file header");
+    // Three events: one of each type the operator might want to restrict to.
+    let events = vec![ev(1, "execve"), ev(2, "openat"), ev(3, "connect")];
+
+    // Simulate `--trace-filter=connect,execve`: only those two types pass.
+    let filtered = filter_events(events, &["connect", "execve"]);
+
+    assert_eq!(
+        filtered.len(),
+        2,
+        "filter must keep exactly the two requested event types",
+    );
+    assert!(
+        filtered.iter().all(|e| e.r#type != "openat"),
+        "openat events must be excluded when not in the allowed_types list",
+    );
+
+    let kinds: Vec<&str> = filtered.iter().map(|e| e.r#type.as_str()).collect();
+    assert!(kinds.contains(&"execve"));
+    assert!(kinds.contains(&"connect"));
+
+    // --- Negative path: an empty allowed_types list filters everything out ---
+    let none_allowed = filter_events(
+        vec![ev(1, "execve"), ev(2, "openat"), ev(3, "connect")],
+        &[],
+    );
+    assert!(
+        none_allowed.is_empty(),
+        "with no allowed types, the filter must drop every event",
+    );
+
+    // --- Idempotency: filtering an already-filtered slice is a no-op ---
+    let once = filter_events(vec![ev(1, "execve"), ev(2, "connect")], &["execve", "connect"]);
+    let twice = filter_events(once.clone(), &["execve", "connect"]);
+    assert_eq!(once.len(), twice.len());
 }
