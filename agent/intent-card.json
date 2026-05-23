@@ -1,0 +1,135 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "prd_source": "/home/jsy/projects/autobuilder/PRD-session-trace-receipt.md",
+  "root_motivation": "Prove runtime-level compliance with hard_constraints that are invisible to source review. The existing 7-receipt gate validates what the build SAYS (clippy, deny, grep); it cannot prove what the runtime DOES (subprocess transitivity, build.rs behavior, silent abort sites). A syscall-level session trace turns 'no network' or 'no out-of-target writes' from a static-grep guess into an unfakeable receipt, in the autoresearch sense.",
+  "user_persona": "The autobuilder loop itself, and every PRD whose intent-card declares a deny_* hard_constraint (deny_network, deny_unsafe_runtime, max_subprocess_depth, future deny_filesystem_writes_outside_target). Runs on the jsy laptop and any Linux CI runner with bpftrace + sudoers access for the tracer.",
+  "unfakeable_metric": {
+    "name": "session_trace_receipt_callable",
+    "lower_is_better": false,
+    "harness_command": "scripts/run-metrics.sh",
+    "target": 1
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "`autobuilder loop --trace` shells out to `ctrace start --root <pid>` before the metric-harness spawn and `ctrace stop` after, capturing NDJSON to target/autobuilder/session-trace.ndjson.",
+      "test": "tests/acceptance_ac1.rs — smoke a traced iteration, assert log file exists and is non-empty"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "When ctrace is unavailable (missing binary, sudo denied, bpftrace missing), `--trace` emits a session-trace.json receipt with verdict=skipped and a skip_reason field; does NOT abort the iteration.",
+      "test": "tests/acceptance_ac2.rs — mock the ctrace binary path to /bin/false; assert verdict=skipped"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "The receipt validates against autobuilder.session_trace_receipt.v1 schema and is digest-bound (sha256 envelope matching other receipts).",
+      "test": "tests/acceptance_ac3.rs — round-trip parse + digest verify"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "constraints_evaluated block is populated from intent_card.hard_constraints — only declared constraints appear, each with claimed, an observed counterpart, and a violated bool.",
+      "test": "tests/acceptance_ac4.rs — intent-card with deny_network:true produces a deny_network entry; intent-card without it does not"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "When deny_network:true is claimed and the trace contains >=1 connect event, verdict=block.",
+      "test": "tests/acceptance_ac5.rs — synthesized NDJSON with a connect line, expect block verdict"
+    },
+    {
+      "id": "AC6",
+      "level": "MUST",
+      "description": "`autobuilder gate` walks 8 receipts (was 7); existing 7 receipts continue to pass on the autobuilder repo without modification.",
+      "test": "scripts/run-metrics.sh — smoke against the autobuilder repo, expect receipts=8 pass=8 verdict=pass"
+    },
+    {
+      "id": "AC7",
+      "level": "SHOULD",
+      "description": "Receipt includes tracer.log_sha256 so the raw NDJSON is tamper-evident; recomputing the sha256 of the log on disk must match the receipt.",
+      "test": "tests/acceptance_ac7.rs — write trusted log, emit receipt, mutate log, assert digest mismatch detected"
+    },
+    {
+      "id": "AC8",
+      "level": "SHOULD",
+      "description": "`--trace` adds <5% wall-clock overhead to the loop on a cargo-test-heavy iteration.",
+      "test": "benchmark script: 5 traced + 5 untraced iterations against the autobuilder repo, compare median wall-clock"
+    },
+    {
+      "id": "AC9",
+      "level": "MAY",
+      "description": "A `--trace-filter <type,type,...>` flag restricts captured event types (e.g. --trace-filter=connect,execve) to reduce log size for long iterations.",
+      "test": "tests/acceptance_ac9.rs — invoke with filter, assert only requested event types in log"
+    }
+  ],
+  "scope": [
+    "Parse ctrace NDJSON output (execve, openat-W, unlinkat, connect events).",
+    "Evaluate captured events against intent_card.hard_constraints (deny_network, deny_unsafe_runtime, max_subprocess_depth, and any future deny_* constraint that has an event-type mapping).",
+    "Emit autobuilder.session_trace_receipt.v1 receipt to target/autobuilder/receipts/session-trace.json, digest-bound to HEAD.",
+    "Wire as 8th ReceiptSpec in gate.rs with pass_verdicts = [pass, skipped].",
+    "Provide an opt-in `--trace` flag on `autobuilder loop` that wraps the metric-harness spawn with ctrace start/stop.",
+    "Degrade to verdict=skipped (not failure) when ctrace, bpftrace, or sudo is unavailable."
+  ],
+  "non_goals": [
+    "Always-on tracing. Opt-in only; default loops continue to produce 7 receipts.",
+    "Per-syscall semantic interpretation (no curl-vs-wget argv parsing). Connect = violation, no exceptions in v1.",
+    "Replay or causal-graph analysis. The NDJSON log is the artifact; ctrace query handles forensic spelunking.",
+    "Cross-platform support. Linux + bpftrace only; macOS and WSL deferred.",
+    "Replacing in-process tracing crate instrumentation. Session-trace observes the OUTSIDE of autobuilder (subprocesses, file IO); per-function timing is a separate layer.",
+    "Real-time syscall blocking (IDS-style). The receipt is post-hoc; the gate consumes it.",
+    "Customizable allowlists for disallowed_binaries beyond the v1 hardcoded set (cargo, rustc, bash, sh, jq, git, ctrace, bpftrace, sudo). Customization deferred to v2."
+  ],
+  "hard_constraints": {
+    "rust_edition": "2024",
+    "target_kind": "cli",
+    "deny_unsafe": true,
+    "max_deps": 2,
+    "msrv": "1.85",
+    "additional": {
+      "no_unwrap_in_src": true,
+      "no_expect_in_src": true,
+      "all_receipts_digest_bound": true,
+      "max_deps_note": "+2 over workspace baseline; serde + serde_json + sha2 already in workspace, anticipate nix or libc for PID handling plus one parser helper"
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why add an 8th receipt to a gate that already has 7?",
+      "a": "Because the existing 7 prove what the BUILD says (clippy lints, cargo deny, source grep, AC tests). They cannot prove what the RUNTIME does — specifically the hard_constraints we want to declare but currently can't (deny_network, deny_filesystem_writes_outside_target, max_subprocess_depth). Without runtime evidence, those constraints have no enforcement mechanism, so we don't declare them, which is a real ceiling on what intent-cards can usefully say."
+    },
+    {
+      "why": 2,
+      "q": "Why does runtime evidence matter when the reviewer-agent already does source review?",
+      "a": "Source review catches what is visible in the diff. It misses (a) transitive dependencies' build.rs scripts that the diff does not surface, (b) subprocess behavior of bash harnesses the metric-harness invokes, and (c) silent abort sites like the recurring audit-checks.sh-aborts-mid-run issue where reading the source does not tell you which path was taken at runtime. A reviewer cannot read every transitive dep's build.rs every iteration; a session trace makes whatever actually ran visible."
+    },
+    {
+      "why": 3,
+      "q": "Why not use static analysis (clippy lints forbidding std::net, forbidding std::process::Command) instead?",
+      "a": "Static analysis catches direct calls in the crate under review but not subprocess transitivity. A `bash run-metrics.sh` that internally invokes `curl example.com` passes every Rust-side lint because Rust never sees `curl`. Subprocess-tree visibility requires either an LSM-style sandbox (heavy, OS-specific, hard to verify) or a syscall tracer (lightweight, OS-specific, but already implemented in wintermute/ctrace). The tracer wins on dev cost."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "Where does the new crate live — standalone project or workspace member of autobuilder?",
+      "resolution": "Workspace member at autobuilder/crates/session-trace/, mirroring the metric-harness pattern. The PRD explicitly states 'lives inside the existing autobuilder workspace'. Stage 2 scaffold path needs to either (a) emit a standalone project that is then merged via subtree (the metric-harness rollout path), or (b) accept a `--workspace-member` flag. v1 of intake does not pre-resolve this; flagged for Stage 2 decision."
+    },
+    {
+      "question": "What counts as a 'disallowed_binary' under deny_unsafe_runtime?",
+      "resolution": "v1 ships a hardcoded allowlist: cargo, rustc, bash, sh, jq, git, ctrace, bpftrace, sudo. Any execve of anything else during a `deny_unsafe_runtime: true` iteration is a violation. Customization deferred to v2."
+    },
+    {
+      "question": "Should the raw NDJSON trace be archived per-iteration or overwritten?",
+      "resolution": "Archived at target/autobuilder/session-traces/<head_sha>.ndjson, mirroring the receipts/<head_sha>.json pattern. A `--trace-rotate <N>` flag can be added later if log volume becomes an issue; v1 does not ship it."
+    },
+    {
+      "question": "Is the unfakeable metric (session_trace_receipt_callable) redundant with AC6 (gate walks 8 receipts)?",
+      "resolution": "Yes — and this is acceptable. The metric is binary: did the gate's receipt count tick from 7 to 8 with a passing session-trace? AC6 says the same thing. By design, the metric should be the load-bearing AC's pass condition restated as a single scalar (autoresearch model). Recorded as known overlap."
+    }
+  ],
+  "created_at": "2026-05-23T01:11:11Z",
+  "intent_slug": "session-trace-receipt"
+}

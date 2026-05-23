@@ -1,0 +1,16 @@
+{
+  "schema": "autobuilder.owner_map.v1",
+  "default_owner": "autobuilder",
+  "routes": [
+    { "glob": "src/**", "owner": "edit-agent" },
+    { "glob": "tests/**", "owner": "scaffold (read-only after intake)" },
+    { "glob": "scripts/**", "owner": "skill (read-only)" },
+    { "glob": "agent/**", "owner": "orchestrator" },
+    { "glob": "Cargo.toml", "owner": "scaffold (read-only after intake)" },
+    { "glob": "Cargo.lock", "owner": "edit-agent (deps-only iterations)" },
+    { "glob": "clippy.toml", "owner": "scaffold (read-only)" },
+    { "glob": "deny.toml", "owner": "scaffold (read-only)" },
+    { "glob": "rust-toolchain.toml", "owner": "scaffold (read-only)" },
+    { "glob": ".github/**", "owner": "scaffold (read-only)" }
+  ]
+}
