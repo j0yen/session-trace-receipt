@@ -4,10 +4,10 @@
   "root_motivation": "Prove runtime-level compliance with hard_constraints that are invisible to source review. The existing 7-receipt gate validates what the build SAYS (clippy, deny, grep); it cannot prove what the runtime DOES (subprocess transitivity, build.rs behavior, silent abort sites). A syscall-level session trace turns 'no network' or 'no out-of-target writes' from a static-grep guess into an unfakeable receipt, in the autoresearch sense.",
   "user_persona": "The autobuilder loop itself, and every PRD whose intent-card declares a deny_* hard_constraint (deny_network, deny_unsafe_runtime, max_subprocess_depth, future deny_filesystem_writes_outside_target). Runs on the jsy laptop and any Linux CI runner with bpftrace + sudoers access for the tracer.",
   "unfakeable_metric": {
-    "name": "session_trace_receipt_callable",
+    "name": "acceptance_tests_passing_count",
     "lower_is_better": false,
     "harness_command": "scripts/run-metrics.sh",
-    "target": 1
+    "target": 9
   },
   "acceptance_criteria": [
     {
@@ -124,6 +124,10 @@
     {
       "question": "Should the raw NDJSON trace be archived per-iteration or overwritten?",
       "resolution": "Archived at target/autobuilder/session-traces/<head_sha>.ndjson, mirroring the receipts/<head_sha>.json pattern. A `--trace-rotate <N>` flag can be added later if log volume becomes an issue; v1 does not ship it."
+    },
+    {
+      "question": "Why did the unfakeable metric switch from session_trace_receipt_callable to acceptance_tests_passing_count between intake and Stage 3?",
+      "resolution": "The scaffolded scripts/run-metrics.sh emits a generic acceptance_tests_passing_count scalar; it has no project-specific logic for evaluating whether `autobuilder gate` on the parent repo would tick from 7 to 8 receipts. The session_trace_receipt_callable name remained encoded as AC6's semantic check (test against the parent autobuilder repo), and the function-count metric serves as the autobuilder convention for scaffolded projects (same pattern as metric-harness). Recorded as known-issue #4 in PLAN.md."
     },
     {
       "question": "Is the unfakeable metric (session_trace_receipt_callable) redundant with AC6 (gate walks 8 receipts)?",
