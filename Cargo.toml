@@ -53,6 +53,10 @@ strip = "debuginfo"
 panic = "abort"
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
 
 [dev-dependencies]
 proptest = "1"
+tempfile = "3"

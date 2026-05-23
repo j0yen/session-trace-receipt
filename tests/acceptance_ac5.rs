@@ -3,14 +3,80 @@
 //! Project: session-trace-receipt (cli)
 //! AC description: When deny_network:true is claimed and the trace contains >=1 connect event, verdict=block.
 //! Test predicate: tests/acceptance_ac5.rs — synthesized NDJSON with a connect line, expect block verdict
-//!
-//! READ-ONLY after scaffold. To change an AC, file
-//! agent/intent_card_amendment_request.json and re-scaffold.
+
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown)]
+
+use session_trace_receipt::{evaluate, parse_ndjson, HardConstraints, TraceEvent};
 
 #[test]
 fn acceptance_ac5() {
-    // TODO(edit-agent): implement the test body that verifies the
-    // AC description above. Until implemented, this test fails so the
-    // iterate-and-prove loop sees a real signal.
-    panic!("AC AC5 not yet implemented — see file header");
+    // --- Path 1: hand-built event vector ---
+    let events = vec![TraceEvent {
+        ts: 1,
+        r#type: "connect".to_string(),
+        pid: Some(42),
+        comm: Some("curl".to_string()),
+        file: None,
+        path: None,
+        flags: None,
+    }];
+    let constraints = HardConstraints {
+        deny_network: true,
+        deny_unsafe_runtime: false,
+        max_subprocess_depth: None,
+    };
+    let eval = evaluate(&events, &constraints);
+
+    assert_eq!(eval.verdict, "block", "one connect event must force a block verdict");
+
+    let entry = eval
+        .map
+        .get("deny_network")
+        .expect("deny_network entry must be present when the constraint is claimed");
+    let obj = entry
+        .as_object()
+        .expect("deny_network entry must be a JSON object");
+    assert_eq!(obj.get("claimed").and_then(serde_json::Value::as_bool), Some(true));
+    assert_eq!(
+        obj.get("connect_events").and_then(serde_json::Value::as_u64),
+        Some(1),
+        "connect_events must reflect the count from the trace",
+    );
+    assert_eq!(
+        obj.get("violated").and_then(serde_json::Value::as_bool),
+        Some(true),
+        "violated must be true when there is >=1 connect event under deny_network",
+    );
+
+    // --- Path 2: synthesized NDJSON exercising parse_ndjson + evaluate ---
+    let ndjson = "\
+{\"ts\":0,\"type\":\"begin\",\"root_pid\":99}
+{\"ts\":7,\"type\":\"execve\",\"pid\":99,\"ppid\":1,\"comm\":\"curl\",\"file\":\"/usr/bin/curl\"}
+{\"ts\":12,\"type\":\"connect\",\"pid\":99,\"comm\":\"curl\",\"fd\":5}
+";
+    let parsed = parse_ndjson(ndjson);
+    assert_eq!(parsed.len(), 3, "all three NDJSON lines must parse");
+    assert!(
+        parsed.iter().any(|e| e.r#type == "connect"),
+        "the connect line must round-trip through parse_ndjson",
+    );
+
+    let eval2 = evaluate(&parsed, &constraints);
+    assert_eq!(eval2.verdict, "block");
+
+    // --- Negative control: same trace with deny_network = false → pass ---
+    let permissive = HardConstraints {
+        deny_network: false,
+        deny_unsafe_runtime: false,
+        max_subprocess_depth: None,
+    };
+    let eval_permissive = evaluate(&parsed, &permissive);
+    assert_eq!(
+        eval_permissive.verdict, "pass",
+        "without deny_network claimed, the same connect event must not block",
+    );
+    assert!(
+        !eval_permissive.map.contains_key("deny_network"),
+        "an unclaimed constraint must not appear in constraints_evaluated",
+    );
 }

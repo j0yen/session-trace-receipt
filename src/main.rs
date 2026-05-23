@@ -1,8 +1,15 @@
-//! session-trace-receipt — autobuilder-scaffolded binary.
+//! `session-trace-receipt` binary entry point.
 //!
-//! Generated stub. The edit-agent replaces this body across iterations.
+//! Iter-1 surface is intentionally minimal: tests drive the library directly,
+//! so this `main` exists only so `cargo build --release` produces a working
+//! binary. The full CLI lands in a later iteration.
 
-fn main() -> std::process::ExitCode {
-    eprintln!("session-trace-receipt: stub — implement me");
-    std::process::ExitCode::from(2)
+#![cfg_attr(not(test), forbid(unsafe_code))]
+#![allow(clippy::print_stdout, clippy::print_stderr)]
+
+fn main() {
+    println!(
+        "session-trace-receipt {} — iter-1 surface only exposes the library; the full CLI lands in a later iteration. See tests/acceptance_ac*.rs for usage.",
+        env!("CARGO_PKG_VERSION"),
+    );
 }

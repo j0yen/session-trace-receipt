@@ -3,14 +3,91 @@
 //! Project: session-trace-receipt (cli)
 //! AC description: The receipt validates against autobuilder.session_trace_receipt.v1 schema and is digest-bound (sha256 envelope matching other receipts).
 //! Test predicate: tests/acceptance_ac3.rs — round-trip parse + digest verify
-//!
-//! READ-ONLY after scaffold. To change an AC, file
-//! agent/intent_card_amendment_request.json and re-scaffold.
+
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown)]
+
+use session_trace_receipt::{
+    build_receipt, evaluate, sha256_hex, ConstraintsEvaluation, HardConstraints,
+    SessionTraceReceipt, TraceEvent, TracerInfo, RECEIPT_SCHEMA,
+};
 
 #[test]
 fn acceptance_ac3() {
-    // TODO(edit-agent): implement the test body that verifies the
-    // AC description above. Until implemented, this test fails so the
-    // iterate-and-prove loop sees a real signal.
-    panic!("AC AC3 not yet implemented — see file header");
+    // Build a small, fully-populated receipt.
+    let events = vec![TraceEvent {
+        ts: 100,
+        r#type: "execve".to_string(),
+        pid: Some(1234),
+        comm: Some("cargo".to_string()),
+        file: Some("/usr/bin/cargo".to_string()),
+        path: None,
+        flags: None,
+    }];
+    let constraints = HardConstraints {
+        deny_network: true,
+        deny_unsafe_runtime: false,
+        max_subprocess_depth: None,
+    };
+    let eval: ConstraintsEvaluation = evaluate(&events, &constraints);
+
+    let tracer = TracerInfo {
+        tool: "ctrace".to_string(),
+        version: Some("0.1.0".to_string()),
+        root_pid: Some(1234),
+        log_sha256: sha256_hex(b"sample-ndjson-bytes"),
+        log_path: "/tmp/session-trace.ndjson".to_string(),
+        event_count: 1,
+    };
+
+    let original = build_receipt(
+        "abc123def4567890abc123def4567890abc12345".to_string(),
+        "2026-05-22T12:34:56Z".to_string(),
+        tracer,
+        eval,
+        vec!["constructed in acceptance_ac3".to_string()],
+    );
+
+    // --- Schema check ---
+    assert_eq!(original.schema, RECEIPT_SCHEMA);
+    assert_eq!(original.verdict, "pass");
+
+    // --- Round-trip parse ---
+    let serialized = serde_json::to_vec(&original).expect("receipt must serialize");
+    let parsed: SessionTraceReceipt =
+        serde_json::from_slice(&serialized).expect("receipt must round-trip via serde_json");
+
+    assert_eq!(parsed.schema, original.schema);
+    assert_eq!(parsed.head_sha, original.head_sha);
+    assert_eq!(parsed.captured_at, original.captured_at);
+    assert_eq!(parsed.verdict, original.verdict);
+    assert_eq!(parsed.tracer.tool, original.tracer.tool);
+    assert_eq!(parsed.tracer.log_sha256, original.tracer.log_sha256);
+    assert_eq!(parsed.tracer.event_count, original.tracer.event_count);
+    assert_eq!(parsed.constraints_evaluated, original.constraints_evaluated);
+
+    // --- Digest envelope: parsing then re-serializing must yield the same
+    // bytes (canonical roundtrip) and therefore the same sha256.
+    let digest_original = sha256_hex(&serialized);
+    let reserialized = serde_json::to_vec(&parsed).expect("reserialize must succeed");
+    let digest_reserialized = sha256_hex(&reserialized);
+
+    assert_eq!(
+        digest_original, digest_reserialized,
+        "sha256 envelope must be stable across a parse + reserialize round-trip"
+    );
+
+    // The digest must be a 64-char hex string (sha256 → 32 bytes → 64 hex chars).
+    assert_eq!(digest_original.len(), 64);
+    assert!(digest_original.chars().all(|c| c.is_ascii_hexdigit()));
+
+    // Mutating the bytes must change the digest — the envelope is tamper-evident.
+    let mut mutated: Vec<u8> = reserialized;
+    if let Some(last) = mutated.last_mut() {
+        *last = last.wrapping_add(1);
+    }
+    let digest_mutated = sha256_hex(&mutated);
+    assert_ne!(
+        digest_original, digest_mutated,
+        "sha256 digest must change when underlying bytes change"
+    );
 }

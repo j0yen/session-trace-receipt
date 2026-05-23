@@ -51,7 +51,7 @@ if ! cargo clippy --workspace --message-format=json -- -D warnings > target/auto
 fi
 
 echo "::gate cargo test" | tee -a "$LOG"
-cargo test --workspace 2>&1 | tee target/autobuilder/test-output.txt | tee -a "$LOG" || true
+cargo test --workspace --no-fail-fast 2>&1 | tee target/autobuilder/test-output.txt | tee -a "$LOG" || true
 
 # Count AC results by re-running tests with the acceptance_ prefix and parsing.
 AC_TOTAL=$(find tests -maxdepth 1 -name 'acceptance_*.rs' -type f 2>/dev/null | wc -l)

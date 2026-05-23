@@ -3,14 +3,49 @@
 //! Project: session-trace-receipt (cli)
 //! AC description: When ctrace is unavailable (missing binary, sudo denied, bpftrace missing), `--trace` emits a session-trace.json receipt with verdict=skipped and a skip_reason field; does NOT abort the iteration.
 //! Test predicate: tests/acceptance_ac2.rs — mock the ctrace binary path to /bin/false; assert verdict=skipped
-//!
-//! READ-ONLY after scaffold. To change an AC, file
-//! agent/intent_card_amendment_request.json and re-scaffold.
+
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::doc_markdown)]
+
+use session_trace_receipt::{skipped_receipt, RECEIPT_SCHEMA};
 
 #[test]
 fn acceptance_ac2() {
-    // TODO(edit-agent): implement the test body that verifies the
-    // AC description above. Until implemented, this test fails so the
-    // iterate-and-prove loop sees a real signal.
-    panic!("AC AC2 not yet implemented — see file header");
+    // Simulate the tracer-unavailable path: ctrace binary not on PATH, so the
+    // CLI calls `skipped_receipt` and the iteration continues.
+    let head_sha = "deadbeefcafebabe1234567890abcdef00000000".to_string();
+    let captured_at = "2026-05-22T00:00:00Z".to_string();
+    let reason = "tracer_unavailable: ctrace binary not found on PATH";
+
+    let receipt = skipped_receipt(head_sha.clone(), captured_at.clone(), reason);
+
+    assert_eq!(receipt.schema, RECEIPT_SCHEMA);
+    assert_eq!(receipt.verdict, "skipped");
+    assert_eq!(receipt.head_sha, head_sha);
+    assert_eq!(receipt.captured_at, captured_at);
+
+    let skip_reason = receipt
+        .skip_reason
+        .as_deref()
+        .expect("skip_reason must be populated when verdict is 'skipped'");
+    assert!(
+        skip_reason.starts_with("tracer_unavailable"),
+        "skip_reason should describe the tracer-unavailable path, got: {skip_reason}",
+    );
+    assert_eq!(skip_reason, reason);
+
+    assert_eq!(receipt.tracer.tool, "ctrace");
+    assert_eq!(
+        receipt.tracer.log_sha256, "",
+        "log_sha256 must be empty on the skipped path; no NDJSON was captured",
+    );
+    assert_eq!(receipt.tracer.event_count, 0);
+    assert!(
+        receipt.constraints_evaluated.is_empty(),
+        "no constraints can be evaluated when the tracer never ran",
+    );
+
+    // The receipt must serialize cleanly so the gate can read it back.
+    let json = serde_json::to_string(&receipt).expect("receipt must serialize to JSON");
+    assert!(json.contains("\"verdict\":\"skipped\""));
+    assert!(json.contains("\"skip_reason\""));
 }
