@@ -2,6 +2,24 @@
 
 > Prove runtime-level compliance with hard_constraints that are invisible to source review.
 
+## Install
+
+### One-liner
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/j0yen/session-trace-receipt/main/install.sh | bash
+```
+
+### Manual
+
+```sh
+git clone --depth 1 https://github.com/j0yen/session-trace-receipt.git
+cd session-trace-receipt
+./install.sh
+```
+
+Installs the `session-trace-receipt` binary via `cargo install --path . --locked`. Requires `cargo` / `rustc 1.85+` and `git`. Built binary lands in `~/.cargo/bin/`.
+
 ## Why
 
 Prove runtime-level compliance with hard_constraints that are invisible to source review. The existing 7-receipt gate validates what the build SAYS (clippy, deny, grep); it cannot prove what the runtime DOES (subprocess transitivity, build.rs behavior, silent abort sites). A syscall-level session trace turns 'no network' or 'no out-of-target writes' from a static-grep guess into an unfakeable receipt, in the autoresearch sense.
